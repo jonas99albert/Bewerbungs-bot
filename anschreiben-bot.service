@@ -1,0 +1,21 @@
+[Unit]
+Description=Telegram Anschreiben Bot v2
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=pi
+WorkingDirectory=/home/pi/telegram_anschreiben_bot_v2
+Environment="TELEGRAM_TOKEN=DEIN_TOKEN_HIER"
+Environment="ANTHROPIC_API_KEY=DEIN_KEY_HIER"
+# Uhrzeit des täglichen Job-Alerts (UTC)
+Environment="DAILY_HOUR=6"
+Environment="DAILY_MINUTE=0"
+ExecStart=/home/pi/telegram_anschreiben_bot_v2/venv/bin/python bot.py
+Restart=always
+RestartSec=15
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
