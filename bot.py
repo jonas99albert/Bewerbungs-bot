@@ -354,7 +354,7 @@ async def cmd_jobsetup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🔍 *Job-Präferenzen einrichten*\n\n"
         "Wie lautet deine *gewünschte Berufsbezeichnung*?\n"
-        "_(z.B. „Software Engineer", „Marketing Manager", „Data Analyst")_",
+        "_(z.B. 'Software Engineer', 'Marketing Manager', 'Data Analyst')_",
         parse_mode="Markdown",
     )
     return JOB_TITLE
@@ -363,7 +363,7 @@ async def jobsetup_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["job_title"] = update.message.text.strip()
     await update.message.reply_text(
         "📍 In welcher *Stadt / Region* suchst du?\n"
-        "_(z.B. „Berlin", „München", „Remote", „Deutschland")_",
+        "_(z.B. 'Berlin', 'Muenchen', 'Remote', 'Deutschland')_",
         parse_mode="Markdown",
     )
     return JOB_LOCATION
@@ -372,7 +372,7 @@ async def jobsetup_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["job_location"] = update.message.text.strip()
     await update.message.reply_text(
         "🏷️ Welche *weiteren Stichwörter* soll die Suche berücksichtigen?\n"
-        "_(z.B. „Python React", „agil Scrum", „Teilzeit" – oder `skip` für keine)_",
+        "_(z.B. 'Python React', 'agil Scrum', 'Teilzeit' - oder `skip` für keine)_",
         parse_mode="Markdown",
     )
     return JOB_KEYWORDS
