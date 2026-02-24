@@ -15,9 +15,11 @@ import re
 from datetime import datetime, time
 from pathlib import Path
 
+import xml.etree.ElementTree as ET
+import urllib.parse
+
 import httpx
 import anthropic
-from jobspy import scrape_jobs
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -99,46 +101,68 @@ def load_job_from_cache(user_id: int, jid: str) -> dict | None:
 
 def search_jobs_sync(prefs: dict) -> list[dict]:
     """
-    Sucht Jobs via JobSpy (LinkedIn + Indeed).
-    Läuft synchron – wird per run_in_executor aufgerufen.
+    Sucht Jobs via Indeed RSS-Feed (kein ARM-Problem, kein scraping).
     """
     search_term = prefs.get("title", "Software Engineer")
     location    = prefs.get("location", "Deutschland")
     keywords    = prefs.get("keywords", "")
     is_remote   = prefs.get("remote", False)
 
-    # Vollständiger Suchbegriff
     full_query = f"{search_term} {keywords}".strip()
+    if is_remote:
+        full_query += " remote"
+
+    params = urllib.parse.urlencode({
+        "q":   full_query,
+        "l":   location,
+        "sort": "date",
+        "limit": 10,
+    })
+    url = f"https://de.indeed.com/rss?{params}"
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; JobBot/1.0)"}
 
     try:
-        df = scrape_jobs(
-            site_name=["linkedin", "indeed"],
-            search_term=full_query,
-            location=location,
-            results_wanted=20,          # mehr holen, dann filtern
-            hours_old=48,               # max. 2 Tage alt
-            country_indeed="Germany",
-            linkedin_fetch_description=True,
-            is_remote=is_remote,
-            verbose=0,
-        )
+        r = httpx.get(url, headers=headers, timeout=20, follow_redirects=True)
+        r.raise_for_status()
     except Exception as e:
-        logger.error(f"JobSpy Fehler: {e}")
+        logger.error(f"Indeed RSS Fehler: {e}")
         return []
 
-    if df is None or df.empty:
+    try:
+        root = ET.fromstring(r.text)
+    except ET.ParseError as e:
+        logger.error(f"RSS Parse Fehler: {e}")
         return []
 
     jobs = []
-    for _, row in df.iterrows():
+    ns   = {"": ""}   # Indeed RSS hat keinen Namespace
+
+    for item in root.findall(".//item"):
+        def tag(name):
+            el = item.find(name)
+            return el.text.strip() if el is not None and el.text else ""
+
+        title       = tag("title")
+        company_loc = tag("source") or ""
+        link        = tag("link")
+        pub_date    = tag("pubDate")
+        description = re.sub(r"<[^>]+>", " ", tag("description"))
+        description = re.sub(r"\s+", " ", description).strip()[:3000]
+
+        # Firma & Ort aus dem Titel extrahieren (Indeed-Format: "Titel - Firma - Ort")
+        parts   = title.split(" - ")
+        job_title = parts[0].strip() if parts else title
+        company   = parts[1].strip() if len(parts) > 1 else "k.A."
+        job_loc   = parts[2].strip() if len(parts) > 2 else location
+
         jobs.append({
-            "title":       str(row.get("title", "")).strip(),
-            "company":     str(row.get("company", "")).strip(),
-            "location":    str(row.get("location", "")).strip(),
-            "job_url":     str(row.get("job_url", "")).strip(),
-            "description": str(row.get("description", ""))[:4000].strip(),
-            "date_posted": str(row.get("date_posted", "")).strip(),
-            "site":        str(row.get("site", "")).strip(),
+            "title":       job_title,
+            "company":     company,
+            "location":    job_loc,
+            "job_url":     link,
+            "description": description,
+            "date_posted": pub_date,
+            "site":        "indeed",
         })
         if len(jobs) >= 10:
             break
