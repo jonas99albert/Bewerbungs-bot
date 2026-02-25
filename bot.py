@@ -20,6 +20,9 @@ import urllib.parse
 
 import httpx
 import anthropic
+from docx import Document as DocxDocument
+from docx.shared import Pt, Cm
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -228,6 +231,35 @@ async def download_telegram_file(file_id: str, context: ContextTypes.DEFAULT_TYP
             return "\n".join(p.extract_text() or "" for p in reader.pages)
         except Exception:
             return content.decode("latin-1", errors="replace")
+
+def create_docx(anschreiben_text: str, titel: str = "Anschreiben") -> io.BytesIO:
+    """Erstellt ein formatiertes DOCX aus dem Anschreiben-Text."""
+    doc = DocxDocument()
+
+    # Seitenränder (DIN A4, 2.5cm)
+    for section in doc.sections:
+        section.top_margin    = Cm(2.5)
+        section.bottom_margin = Cm(2.5)
+        section.left_margin   = Cm(2.5)
+        section.right_margin  = Cm(2.5)
+
+    # Standard-Schriftart
+    style = doc.styles["Normal"]
+    style.font.name = "Arial"
+    style.font.size = Pt(11)
+
+    # Inhalt zeilenweise einfügen
+    for line in anschreiben_text.splitlines():
+        p = doc.add_paragraph(line)
+        p.paragraph_format.space_after = Pt(0)
+        run = p.runs[0] if p.runs else p.add_run()
+        run.font.name = "Arial"
+        run.font.size = Pt(11)
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return buf
 
 def site_emoji(site: str) -> str:
     return {"linkedin": "💼", "indeed": "🔍", "glassdoor": "🏢", "arbeitsagentur": "🇩🇪"}.get(site.lower(), "📌")
@@ -566,17 +598,14 @@ async def callback_anschreiben(update: Update, context: ContextTypes.DEFAULT_TYP
 
     await msg.delete()
 
-    header = f"📄 *Anschreiben – {job['title']} @ {job['company']}*\n" + "─" * 30 + "\n\n"
-    full   = header + anschreiben
-
-    if len(full) <= 4096:
-        await query.message.reply_text(full, parse_mode="Markdown")
-    else:
-        await query.message.reply_document(
-            document=io.BytesIO(anschreiben.encode("utf-8")),
-            filename=f"Anschreiben_{job['company'].replace(' ','_')}.txt",
-            caption=f"📄 Dein Anschreiben für {job['title']} @ {job['company']}",
-        )
+    docx_buf  = create_docx(anschreiben, titel=f"Anschreiben {job['company']}")
+    filename  = f"Anschreiben_{job['company'].replace(' ','_')}_{job['title'].replace(' ','_')}.docx"
+    await query.message.reply_document(
+        document=docx_buf,
+        filename=filename,
+        caption=f"📄 Anschreiben für *{job['title']}* @ *{job['company']}*",
+        parse_mode="Markdown",
+    )
 
 # ── URL-Handler (direkter Stellenlink) ───────────────────────────────────────
 
@@ -608,17 +637,12 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     await msg.delete()
-    header = "📄 *Dein Anschreiben:*\n" + "─" * 30 + "\n\n"
-    full   = header + anschreiben
-
-    if len(full) <= 4096:
-        await update.message.reply_text(full, parse_mode="Markdown")
-    else:
-        await update.message.reply_document(
-            document=io.BytesIO(anschreiben.encode("utf-8")),
-            filename="Anschreiben.txt",
-            caption="📄 Dein Anschreiben (als Datei)",
-        )
+    docx_buf = create_docx(anschreiben)
+    await update.message.reply_document(
+        document=docx_buf,
+        filename="Anschreiben.docx",
+        caption="📄 Dein Anschreiben als Word-Dokument",
+    )
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
