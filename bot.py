@@ -101,7 +101,9 @@ def load_job_from_cache(user_id: int, jid: str) -> dict | None:
 
 def search_jobs_sync(prefs: dict) -> list[dict]:
     """
-    Sucht Jobs via Indeed RSS-Feed (kein ARM-Problem, kein scraping).
+    Sucht Jobs via Bundesagentur für Arbeit API.
+    Offiziell, kostenlos, keine Auth nötig, kein scraping.
+    https://jobsuche.api.bund.dev/
     """
     search_term = prefs.get("title", "Software Engineer")
     location    = prefs.get("location", "Deutschland")
@@ -109,60 +111,59 @@ def search_jobs_sync(prefs: dict) -> list[dict]:
     is_remote   = prefs.get("remote", False)
 
     full_query = f"{search_term} {keywords}".strip()
+
+    params = {
+        "was":       full_query,
+        "wo":        location,
+        "page":      1,
+        "size":      10,
+        "angebotsart": 1,   # 1 = Arbeit (keine Ausbildung etc.)
+    }
     if is_remote:
-        full_query += " remote"
+        params["arbeitsformen"] = "HOMEOFFICE"
 
-    params = urllib.parse.urlencode({
-        "q":   full_query,
-        "l":   location,
-        "sort": "date",
-        "limit": 10,
-    })
-    url = f"https://de.indeed.com/rss?{params}"
-    headers = {"User-Agent": "Mozilla/5.0 (compatible; JobBot/1.0)"}
+    headers = {
+        "User-Agent": "Jobsuche/2.0 (jonas@example.com)",
+        "OAuthAccessToken": "jobboerse",   # öffentlicher Token
+    }
 
     try:
-        r = httpx.get(url, headers=headers, timeout=20, follow_redirects=True)
+        r = httpx.get(
+            "https://rest.arbeitsagentur.de/jobboerse/jobsuche-service/pc/v4/jobs",
+            params=params,
+            headers=headers,
+            timeout=20,
+        )
         r.raise_for_status()
+        data = r.json()
     except Exception as e:
-        logger.error(f"Indeed RSS Fehler: {e}")
+        logger.error(f"BA-API Fehler: {e}")
         return []
 
-    try:
-        root = ET.fromstring(r.text)
-    except ET.ParseError as e:
-        logger.error(f"RSS Parse Fehler: {e}")
-        return []
-
+    stellenangebote = data.get("stellenangebote") or []
     jobs = []
-    ns   = {"": ""}   # Indeed RSS hat keinen Namespace
 
-    for item in root.findall(".//item"):
-        def tag(name):
-            el = item.find(name)
-            return el.text.strip() if el is not None and el.text else ""
+    for s in stellenangebote:
+        ref_nr  = s.get("refnr", "")
+        job_url = f"https://www.arbeitsagentur.de/jobsuche/jobdetail/{ref_nr}" if ref_nr else ""
 
-        title       = tag("title")
-        company_loc = tag("source") or ""
-        link        = tag("link")
-        pub_date    = tag("pubDate")
-        description = re.sub(r"<[^>]+>", " ", tag("description"))
-        description = re.sub(r"\s+", " ", description).strip()[:3000]
-
-        # Firma & Ort aus dem Titel extrahieren (Indeed-Format: "Titel - Firma - Ort")
-        parts   = title.split(" - ")
-        job_title = parts[0].strip() if parts else title
-        company   = parts[1].strip() if len(parts) > 1 else "k.A."
-        job_loc   = parts[2].strip() if len(parts) > 2 else location
+        # Arbeitsort zusammenbauen
+        ort_obj = s.get("arbeitsort", {})
+        ort     = ", ".join(filter(None, [
+            ort_obj.get("ort", ""),
+            ort_obj.get("region", ""),
+            ort_obj.get("land", ""),
+        ])) or location
 
         jobs.append({
-            "title":       job_title,
-            "company":     company,
-            "location":    job_loc,
-            "job_url":     link,
-            "description": description,
-            "date_posted": pub_date,
-            "site":        "indeed",
+            "title":       s.get("titel", "k.A."),
+            "company":     s.get("arbeitgeber", "k.A."),
+            "location":    ort,
+            "job_url":     job_url,
+            "description": s.get("stellenbeschreibung") or s.get("titel", ""),
+            "date_posted": s.get("eintrittsdatum") or s.get("aktuelleVeroeffentlichungsdatum", ""),
+            "site":        "arbeitsagentur",
+            "refnr":       ref_nr,
         })
         if len(jobs) >= 10:
             break
@@ -229,7 +230,7 @@ async def download_telegram_file(file_id: str, context: ContextTypes.DEFAULT_TYP
             return content.decode("latin-1", errors="replace")
 
 def site_emoji(site: str) -> str:
-    return {"linkedin": "💼", "indeed": "🔍", "glassdoor": "🏢"}.get(site.lower(), "📌")
+    return {"linkedin": "💼", "indeed": "🔍", "glassdoor": "🏢", "arbeitsagentur": "🇩🇪"}.get(site.lower(), "📌")
 
 # ── Job-Nachrichten senden ────────────────────────────────────────────────────
 
